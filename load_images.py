@@ -28,6 +28,7 @@ try:
   from PIL import Image
   import pandas as pd
   import numpy as np
+  import pydicom
 except Exception as e:
   print("Missing dependencies. Please install dependencies from requirements.txt and Pillow and pandas.")
   print(e)
@@ -41,6 +42,7 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 DATASET_SLUG = "ymirsky/medical-deepfakes-lung-cancer"
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+DICOM_EXTS = {".dcm"}
 
 
 def run_kaggle_download(slug: str, dest: Path):
@@ -59,7 +61,24 @@ def find_images(base: Path):
   imgs = []
   for ext in IMAGE_EXTS:
     imgs.extend(base.rglob(f"*{ext}"))
+  for ext in DICOM_EXTS:
+    imgs.extend(base.rglob(f"*{ext}"))
   return sorted(imgs)
+
+
+def load_image(path: Path):
+  if path.suffix.lower() in DICOM_EXTS:
+    ds = pydicom.dcmread(str(path))
+    arr = ds.pixel_array
+    if arr.ndim == 3:
+      arr = arr[0]
+    arr = arr.astype(float)
+    arr = arr - arr.min()
+    if arr.max() > 0:
+      arr = arr / arr.max()
+    arr = (arr * 255).astype('uint8')
+    return Image.fromarray(arr).convert('RGB')
+  return Image.open(path).convert('RGB')
 
 
 def find_labels_csv(base: Path):
@@ -88,7 +107,7 @@ class ImageDataset(Dataset):
   def __getitem__(self, idx):
     path = self.rows.iloc[idx][self.img_col]
     label = int(self.rows.iloc[idx][self.label_col])
-    img = Image.open(path).convert("RGB")
+    img = load_image(Path(path))
     if self.transform:
       img = self.transform(img)
     return img, label
@@ -105,7 +124,7 @@ def extract_embeddings(image_paths, device, batch_size=32):
   with torch.no_grad():
     for i in range(0, len(image_paths), batch_size):
       batch_paths = image_paths[i:i+batch_size]
-      batch_imgs = torch.stack([tf(Image.open(p).convert('RGB')) for p in batch_paths]).to(device)
+      batch_imgs = torch.stack([tf(load_image(Path(p))) for p in batch_paths]).to(device)
       emb = model(batch_imgs).cpu().numpy()
       embeddings.append(emb)
       paths.extend([str(p) for p in batch_paths])
