@@ -1,0 +1,9 @@
+torch
+torchvision
+kagglehub
+pydicom
+Pillow
+pandas
+numpy
+scikit-image
+requests
