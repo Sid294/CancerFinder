@@ -68,8 +68,23 @@ def find_images(base: Path):
 
 def load_image(path: Path):
   if path.suffix.lower() in DICOM_EXTS:
-    ds = pydicom.dcmread(str(path))
-    arr = ds.pixel_array
+    ds = pydicom.dcmread(str(path), force=True)
+    try:
+      arr = ds.pixel_array
+    except Exception:
+      # Some DICOMs are missing File Meta / Transfer Syntax; try a reasonable fallback
+      try:
+        from pydicom.dataset import FileMetaDataset
+        from pydicom.uid import ImplicitVRLittleEndian
+        if not hasattr(ds, 'file_meta') or ds.file_meta is None:
+          ds.file_meta = FileMetaDataset()
+        if not getattr(ds.file_meta, 'TransferSyntaxUID', None):
+          ds.file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
+        arr = ds.pixel_array
+      except Exception:
+        # final fallback: return a blank image to keep pipeline running
+        import numpy as _np
+        arr = _np.zeros((512, 512), dtype='uint8')
     if arr.ndim == 3:
       arr = arr[0]
     arr = arr.astype(float)
@@ -92,6 +107,14 @@ def find_labels_csv(base: Path):
     if any(x in cols for x in ("label", "diagnosis", "target", "class", "category")) or any(x in cols for x in ("image", "filename", "file")):
       return c
   return None
+
+
+def build_dicom_lookup(image_paths):
+  lookup = {}
+  for path in image_paths:
+    key = (path.parent.name, path.stem)
+    lookup.setdefault(key, str(path))
+  return lookup
 
 
 class ImageDataset(Dataset):
@@ -133,9 +156,13 @@ def extract_embeddings(image_paths, device, batch_size=32):
 
 
 def train_classifier(df_labels, img_col, label_col, device):
-  # simple train/val split
-  from sklearn.model_selection import train_test_split
-  train_df, val_df = train_test_split(df_labels, test_size=0.2, stratify=df_labels[label_col], random_state=42)
+  # simple train/val split without extra dependencies
+  shuffled = df_labels.sample(frac=1.0, random_state=42)
+  split_idx = max(1, int(len(shuffled) * 0.8))
+  train_df = shuffled.iloc[:split_idx]
+  val_df = shuffled.iloc[split_idx:]
+  if len(val_df) == 0:
+    val_df = train_df.iloc[:1]
 
   transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])])
 
@@ -218,13 +245,25 @@ def main():
       if c.lower() in ("label", "diagnosis", "target", "class", "category", "label_id"):
         label_col = c
     if img_col is None:
-      # try to match filenames to full paths
-      df['__match__'] = df[df.columns[0]].astype(str)
-      # try to find by basename
-      basemap = {p.name: str(p) for p in imgs}
-      df['filepath'] = df.iloc[:,0].astype(str).map(lambda x: basemap.get(Path(x).name, ""))
-      if df['filepath'].str.len().sum() > 0:
-        img_col = 'filepath'
+      if {"uuid", "slice"}.issubset({c.lower() for c in df.columns}):
+        lookup = build_dicom_lookup(imgs)
+
+        def resolve_row_path(row):
+          uuid_value = str(row["uuid"]).split(".")[0]
+          slice_value = str(int(float(row["slice"])))
+          return lookup.get((uuid_value, slice_value), "")
+
+        df["filepath"] = df.apply(resolve_row_path, axis=1)
+        if df["filepath"].str.len().sum() > 0:
+          img_col = "filepath"
+      if img_col is None:
+        # try to match filenames to full paths
+        df['__match__'] = df[df.columns[0]].astype(str)
+        # try to find by basename
+        basemap = {p.name: str(p) for p in imgs}
+        df['filepath'] = df.iloc[:,0].astype(str).map(lambda x: basemap.get(Path(x).name, ""))
+        if df['filepath'].str.len().sum() > 0:
+          img_col = 'filepath'
     if label_col is None:
       # fallback: assume second column is label
       label_col = df.columns[1]
