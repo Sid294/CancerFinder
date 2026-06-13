@@ -11,7 +11,7 @@ from load_images import RAW_DIR, build_dicom_lookup, find_images, find_labels_cs
 
 
 ROOT = Path(__file__).resolve().parent
-epochs = 20
+epochs = 15
 lr = 0.001
 IMAGE_SIZE = 224
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -20,10 +20,10 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 
 def build_model():
     try:
-        weights = models.ResNet18_Weights.DEFAULT
-        model = models.resnet18(weights=weights)
+        weights = models.ResNet50_Weights.DEFAULT
+        model = models.resnet50(weights=weights)
     except Exception:
-        model = models.resnet18(pretrained=True)
+        model = models.resnet50(pretrained=True)
     model.fc = nn.Linear(model.fc.in_features, 2)
     return model
 
@@ -198,7 +198,7 @@ def train():
             f"val loss: {val_loss:.4f} | val acc: {val_accuracy:.2f}%"
         )
 
-    model_path = ROOT / "resnet18_cancer.pth"
+    model_path = ROOT / "cinder_model.pth"
     torch.save(model.state_dict(), model_path)
     print(f"Model saved as {model_path.name}")
 
@@ -364,4 +364,4 @@ if __name__ == "__main__":
             print(f' TP={tp} TN={tn} FP={fp} FN={fn}')
             print(f' Accuracy={accuracy:.2f}% Precision={precision:.4f} Recall={recall:.4f} F1={f1:.4f}')
     else:
-        parser.print_help()
+        parser.print_help

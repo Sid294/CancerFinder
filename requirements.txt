@@ -8,3 +8,6 @@ numpy
 scikit-image
 requests
 kaggle
+fastapi
+uvicorn
+python-multipart
