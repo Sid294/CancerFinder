@@ -4,7 +4,7 @@ from PIL import Image
 import torch
 import io
 
-from main import load_trained_model, make_eval_transform, ROOT
+from backend.main import load_trained_model, make_eval_transform, ROOT
 
 app = FastAPI()
 
@@ -20,7 +20,7 @@ app.add_middleware(
 )
 
 # Load model once when the API starts
-MODEL_PATH = ROOT / "cinder_model.pth"
+MODEL_PATH = ROOT.parent / "cinder_model.pth"
 
 model, device = load_trained_model(MODEL_PATH)
 transform = make_eval_transform()
